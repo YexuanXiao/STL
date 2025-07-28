@@ -12,10 +12,6 @@
 #include <unordered_set>
 #include <utility>
 
-#ifdef __clang__
-#pragma clang diagnostic ignored "-Wnontrivial-memcall"
-#endif // __clang__
-
 using namespace std;
 
 #ifdef _WIN64
@@ -57,30 +53,32 @@ inline bool operator!=(const stateful_allocator<T>& lhs, const stateful_allocato
     return lhs.state != rhs.state;
 }
 
-// warning C4582: 'garbage_data<std::weak_ptr<_Ty>>::data': constructor is not implicitly called
-// warning C4583: 'garbage_data<std::weak_ptr<_Ty>>::data': destructor is not implicitly called
-#pragma warning(push)
-#pragma warning(disable : 4582 4583)
 template <typename T>
 struct garbage_data {
-    union {
-        T data;
-    };
+    alignas(T) unsigned char repr[sizeof(T)];
 
     bool constructed;
     garbage_data() : constructed(false) {
-        memset(&data, 0xCC, sizeof(data));
+        memset(repr, 0xCC, sizeof(T));
     }
 
     garbage_data(const garbage_data&)            = delete;
     garbage_data& operator=(const garbage_data&) = delete;
 
     T& get() {
-        return data;
+        return reinterpret_cast<T&>(repr[0]);
     }
 
     T* ptr() {
-        return &data;
+        return reinterpret_cast<T*>(repr);
+    }
+
+    unsigned char* repr_ptr() {
+        return repr;
+    }
+
+    bool is_all_zero() const {
+        return all_of(repr, repr + sizeof(T), [](const auto x) { return x == 0; });
     }
 
     T* operator->() {
@@ -100,7 +98,6 @@ struct garbage_data {
         constructed = true;
     }
 };
-#pragma warning(pop)
 
 template <typename Alloc>
 void assert_string_invariants(basic_string<char, char_traits<char>, Alloc>& target, const char* const expected) {
@@ -324,24 +321,19 @@ void test_weak_ptr_construction() {
 
     int i = 42;
     shared_ptr<int> x(shared_ptr<int>{}, &i);
-    const auto all_zero = [](const auto ptr) {
-        const auto first = reinterpret_cast<const char*>(ptr);
-        const auto last  = reinterpret_cast<const char*>(ptr + 1);
-        return all_of(first, last, [](const auto x) { return x == 0; });
-    };
 
     { // Conversion from an empty shared_ptr lvalue with a non-null stored pointer value properly value-initializes
         // both the control block and stored value pointers.
         garbage_data<weak_ptr<int>> testData;
         testData.construct(x);
-        assert(all_zero(testData.ptr()));
+        assert(testData.is_all_zero());
     }
 
     { // Conversion from an empty shared_ptr rvalue with a non-null stored pointer value properly value-initializes
         // both the control block and stored value pointers.
         garbage_data<weak_ptr<int>> testData;
         testData.construct(shared_ptr<int>(x));
-        assert(all_zero(testData.ptr()));
+        assert(testData.is_all_zero());
     }
 
     x.reset(&i, [](int*) {});
@@ -353,7 +345,7 @@ void test_weak_ptr_construction() {
         garbage_data<weak_ptr<int>> testData;
         testData.construct(x);
         void* stored;
-        memcpy(&stored, testData.ptr(), sizeof(void*));
+        memcpy(&stored, testData.repr_ptr(), sizeof(void*));
         assert(stored == &i);
         assert(owner_eq(testData.get(), x));
     }
@@ -363,7 +355,7 @@ void test_weak_ptr_construction() {
         garbage_data<weak_ptr<int>> testData;
         testData.construct(shared_ptr<int>(x));
         void* stored;
-        memcpy(&stored, testData.ptr(), sizeof(void*));
+        memcpy(&stored, testData.repr_ptr(), sizeof(void*));
         assert(stored == &i);
         assert(owner_eq(testData.get(), x));
     }
