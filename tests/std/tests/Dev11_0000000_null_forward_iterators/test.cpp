@@ -29,10 +29,6 @@
 #include <unordered_set>
 #include <vector>
 
-#ifdef __clang__
-#pragma clang diagnostic ignored "-Wnontrivial-memcall"
-#endif // __clang__
-
 using namespace std;
 
 // N3797 24.2.5 [forward.iterators]/2:
@@ -102,11 +98,11 @@ void test_iterator() {
         aligned_union_t<0, FwdIt> au3;
         aligned_union_t<0, FwdIt> au4;
 
+        memset(&au3, 0xCC, sizeof(FwdIt));
+        memset(&au4, 0xDD, sizeof(FwdIt));
+
         FwdIt* p3 = reinterpret_cast<FwdIt*>(&au3);
         FwdIt* p4 = reinterpret_cast<FwdIt*>(&au4);
-
-        memset(p3, 0xCC, sizeof(FwdIt));
-        memset(p4, 0xDD, sizeof(FwdIt));
 
         new (p3) FwdIt{};
         new (p4) FwdIt{};
